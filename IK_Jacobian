@@ -1,0 +1,130 @@
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+
+// Inverse Kinematics implementation for body animation using different mathematical methods involving Jacobian's matrix
+
+public class IK_Jacobian : MonoBehaviour
+{
+    public Transform[] joints;
+    private Matrix newPos;
+    private Matrix coordinates;
+    public Transform Target;
+    public Vector3 deltaE;
+    public float step = 1f;
+    private Matrix Jac;
+    public int mode = 0;  // 0 = Jacobian Transpose, 1 = Pseudo-Inverse Jacobian, 2 = Damped Least Squares
+    public float damping = 0.5f; 
+    public Transform endEffector;
+    // Start is called before the first frame update
+    void Start()
+    {
+        joints = GetComponentsInChildren<Transform>();
+        newPos = new Matrix(3, joints.Length);
+        coordinates = new Matrix(3, joints.Length);
+        Jac = new Matrix(3, 3);
+        endEffector =joints[joints.Length - 1];
+            
+    }
+
+    // Update is called once per frame
+    void Update()
+    {
+        deltaE = Target.position - joints[joints.Length - 1].position;
+        InverseKinematics();
+    }
+
+    void InverseKinematics()
+    {
+        if (Mathf.Abs(deltaE.x) > 0.1f || Mathf.Abs(deltaE.y) > 0.1f || Mathf.Abs(deltaE.z) > 0.01f)
+        {
+            for (int i = 0; i < joints.Length; i++)
+            {
+
+                Matrix4x4 axis = TransformExtensions.GetWorldMatrix(joints[i], true);
+                Vector3 JacX = Vector3.Cross(Matrix4x4Extensions.GetRight(axis), joints[joints.Length - 1].position - joints[i].position);
+                Vector3 JacY = Vector3.Cross(Matrix4x4Extensions.GetUp(axis), joints[joints.Length - 1].position - joints[i].position);
+                Vector3 JacZ = Vector3.Cross(Matrix4x4Extensions.GetForward(axis), joints[joints.Length - 1].position - joints[i].position);
+                Jac.Values[0][0] = JacX.x;
+                Jac.Values[1][0] = JacX.y;
+                Jac.Values[2][0] = JacX.z;
+                Jac.Values[0][1] = JacY.x;
+                Jac.Values[1][1] = JacY.y;
+                Jac.Values[2][1] = JacY.z;
+                Jac.Values[0][2] = JacZ.x;
+                Jac.Values[1][2] = JacZ.y;
+                Jac.Values[2][2] = JacZ.z;
+                
+                Matrix dE = new Matrix(3, 1);
+                dE.Values[0][0] = deltaE.x;
+                dE.Values[1][0] = deltaE.y;
+                dE.Values[2][0] = deltaE.z;
+
+                switch(mode)
+                {
+                    case 0:
+                        newPos = Transpose(Jac) * dE;
+                        break;
+                    // Pseudo-Inverse Method
+                    case 1:
+                        Matrix pseudo_inverseJacobian = new Matrix(joints.Length, 3);
+                        pseudo_inverseJacobian = (Transpose(Jac) * Jac).GetInverse() * Transpose(Jac);
+                        newPos = pseudo_inverseJacobian * dE;
+                        step = 0.5f;
+                        break;
+                    // Dumped Least Squares
+                    case 2:
+                        Matrix DLS = new Matrix(joints.Length, 3);
+                        DLS = Transpose(Jac) * (Jac * Transpose(Jac) +
+                                               ((damping * damping) * Identity(Jac.Values.Length, Jac.Values[0].Length)).GetInverse());
+                        newPos = DLS * dE;
+                        step = 0.5f;
+                        break;
+                }
+
+                
+                coordinates.Values[0][i] += newPos.Values[0][0] * step;
+                coordinates.Values[1][i] += newPos.Values[1][0] * step;
+                coordinates.Values[2][i] += newPos.Values[2][0] * step;
+
+            }
+            for (int t = 0; t < joints.Length-1; t++)
+            {
+                joints[t].eulerAngles = new Vector3(coordinates.Values[0][t],
+                                                 coordinates.Values[1][t],
+                                                 coordinates.Values[2][t]);
+            }
+            
+        }
+         
+    }
+
+
+    public Matrix Identity(int rows, int cols)
+    {
+        Matrix result = new Matrix(rows, cols);
+        for (int i = 0; i < rows; i++)
+            for(int j = 0; j < cols; j++)
+            {
+                if (i == j)
+                    result.Values[i][j] = 1;
+                else
+                    result.Values[i][j] = 0;
+            }
+
+        return result;
+    }
+
+    public Matrix Transpose(Matrix matrix)
+    {
+        Matrix result = new Matrix(matrix.GetColumns(), matrix.GetRows());
+        for (int i = 0; i < matrix.GetRows(); i++)
+        {
+            for (int j = 0; j < matrix.GetColumns(); j++)
+            {
+                result.Values[j][i] = matrix.Values[i][j];
+            }
+        }
+        return result;
+    }
+}
